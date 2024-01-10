@@ -1,4 +1,6 @@
 using LinearAlgebra
+using LinearSolve
+using NumericalIntegration
 using QuadGK
 using Pkg
 Pkg.add("Plots")
@@ -15,36 +17,38 @@ function E(x::Float64)
 end
 
 function basis(discretization::Int, dom::Float64, i::Int, x::Float64)
+    discretization = convert(Float64, discretization)
+    i = convert(Float64, i)
     h = dom / discretization
-    hInv = discretization / dom
 
-    center = dom * i / discretization
+    center = i * h
     left = center - h
     right = center + h
 
     if x < left || x > right
         return 0.0
     elseif x <= center
-        return (x - left) * hInv
+        return (x - left) / h
     else
-        return (right - x) * hInv
+        return (right - x) / h
     end
 end
 
 function basis_derivative(discretization::Int, dom::Float64, i::Int, x::Float64)
+    discretization = convert(Float64, discretization)
+    i = convert(Float64, i)
     h = dom / discretization
-    hInv = discretization / dom
 
-    center = dom * i / discretization
+    center = i * h
     left = center - h
     right = center + h
 
     if x < left || x > right
         return 0.0
-    elseif x <= center
-        return hInv
+    elseif x < center
+        return 1.0 / h
     else
-        return -hInv
+        return - 1.0 / h
     end
 end
 
@@ -53,15 +57,14 @@ function createBMatrix(discretization::Int, dom::Float64)
     bMatrix = zeros(discretization, discretization)
 
     for i in 1:discretization
-        for j in 1:discretization
-            value = 0.0
+        for j in 1:discretization           
+            x = collect(0 : 1e-6 : dom)
+            f(x) = E(x) * basis_derivative(discretization, dom, i-1, x) * basis_derivative(discretization, dom, j-1, x)
+            y = f.(x)
+            value = integrate(x, y)
+            value = value - E(0.0) * basis(discretization, dom, i-1, 0.0) * basis(discretization, dom, j-1, 0.0)
 
-            integrateFrom = dom * max(max(i, j) - 1, 0) / discretization
-            integrateTo = dom * min(min(i, j) + 1, discretization) / discretization
-
-            value, _ = quadgk(x -> E(x) * basis_derivative(discretization, dom, i, x) * basis_derivative(discretization, dom, j, x), integrateFrom, integrateTo)
-            
-            bMatrix[i, j] = -E(0.0) * basis(discretization, dom, i, 0.0) * basis(discretization, dom, j, 0.0) + value
+            bMatrix[i, j] = value
         end
     end
 
@@ -76,18 +79,15 @@ function createLVector(discretization::Int, dom::Float64)
 end
 
 
-function solve(discretization::Int)
+function solveMES(discretization::Int)
     if discretization < 2
         throw(ArgumentError("discretization must be > 2"))
     end
 
     dom = 2.0
     bMatrix = createBMatrix(discretization, dom)
-    print(bMatrix)
     lVector = createLVector(discretization, dom)
-    print(lVector)
-
-    coefficients = lu(bMatrix) \ lVector
+    coefficients = solve(LinearProblem(bMatrix, lVector), KrylovJL_GMRES()).u
 
     result = vcat(coefficients, 0.0)
 
@@ -98,15 +98,11 @@ using Plots
 gr()
 
 function plotSolution(solution::Solution)
-    # Generate x values from the domain range
     x_values = range(solution.start_domain, stop=solution.end_domain, length=length(solution.coefficients))
     
-    # Plotting the solution
-    plot(x_values, solution.coefficients, title="Finite Element Solution", xlabel="Domain", ylabel="Solution", legend=false)
+    plot(x_values, solution.coefficients, title="Metoda elementów skończonych", xlabel="Dziedzina", ylabel="Rozwiązanie", legend=false)
 end
 
-# Assuming you have a `solution` from your finite element solver:
-solution = solve(50)
+solution = solveMES(50)
 plt = plotSolution(solution)
-display(plt)
-savefig(plt, "solution_plot.png")
+savefig(plt, "wykres.png")
